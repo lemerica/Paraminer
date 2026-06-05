@@ -1,16 +1,9 @@
 # Paramancer — полное руководство по использованию
 
-`param6.py` — мульти-оракульный сканер скрытых HTTP-параметров. Ищет параметры
-(query / body / json / headers), которые **обрабатывает бэкенд**, но которых нет
+`paraminer.py` — мульти-оракульный сканер скрытых HTTP-параметров. Ищет параметры
+(query / body / json / headers), которые обрабатывает бэкенд, но которых нет
 во фронтенде. Single-file, только стандартная библиотека Python (DOM-oracle —
 опционально через Playwright). Работает на Linux / macOS / Termux.
-
-> **Важное про этику.** Сканируй только то, на что у тебя есть письменное
-> разрешение: свой стенд, либо цель в scope активной bug-bounty программы.
-> Список найденных параметров сам по себе — **не уязвимость** и не принимается
-> как репорт. Это вход для ручного поиска IDOR / SSRF / инъекций. Соблюдай
-> правила программы (rate-limit, testing policy). Дефолтный лимит 5 запросов/сек
-> выставлен под типовое правило bug-bounty.
 
 ---
 
@@ -32,25 +25,25 @@
 14. [Wordlists](#14-wordlists)
 15. [Что делать ПОСЛЕ находки](#15-что-делать-после-находки)
 16. [Troubleshooting](#16-troubleshooting)
-17. [Чеклист bug-bounty прогона](#17-чеклист)
+17. [Чеклист багбаунт прогона](#17-чеклист)
 
 ---
 
 ## 1. Как это работает (модель)
 
 Идея: послать запрос с параметром, которого фронтенд не использует, и понять по
-ответу, **заметил ли его бэкенд**. Сам по себе один запрос ничего не скажет —
+ответу, заметил ли его бэкенд. Сам по себе один запрос ничего не скажет —
 ответы шумят (таймстампы, CSRF, сетевой джиттер). Поэтому Paramancer:
 
-1. **Калибруется** — делает N запросов без параметров и запоминает «нормальный»
+1. Калибруется — делает N запросов без параметров и запоминает «нормальный»
    диапазон (статусы, длины, тайминги TTFB, стабильные строки тела,
    Server-Timing, cookies, inline-state).
-2. **Ищет кандидатов** (discovery) — быстро прогоняет словарь.
-3. **Верифицирует** каждого кандидата множеством независимых оракулов и
+2. Ищет кандидатов (discovery) — быстро прогоняет словарь.
+3. Верифицирует каждого кандидата множеством независимых оракулов и
    агрегирует их в итоговый confidence.
 
-Ключевой принцип последней версии: **находка засчитывается, только если есть
-хотя бы один самостоятельно убедительный сигнал** (score ≥ 0.55). Несколько
+Ключевой принцип последней версии: находка засчитывается, только если есть
+хотя бы один самостоятельно убедительный сигнал (score ≥ 0.55). Несколько
 слабых/шумовых сигналов больше не «складываются» в ложную находку.
 
 ---
@@ -59,9 +52,9 @@
 
 ```bash
 # Базово — ничего ставить не надо, только Python 3.7+
-python3 param6.py --help
-python3 param6.py --help-ru      # подробная встроенная справка на русском
-python3 param6.py --selftest     # самотест (поднимает локальные серверы)
+python3 paraminer.py --help
+python3 paraminer.py --help-ru      # подробная встроенная справка на русском
+python3 paraminer.py --selftest     # самотест (поднимает локальные серверы)
 
 # Опционально — DOM-oracle для SPA:
 pip install playwright
@@ -77,13 +70,13 @@ Termux (Android): работает из коробки, добавляй `--no-c
 
 ### `-u/--url` — простой
 ```bash
-python3 param6.py -u "https://target/api/users" -w params.txt
+python3 paraminer.py -u "https://target/api/users" -w params.txt
 ```
 Доп. опции к нему: `-X POST`, `-H "Authorization: Bearer ..."`,
 `-d 'body'`, `-b 'session=...'` (cookie).
 
 ### `-r/--request` — raw HTTP request (как из Burp)
-Сохрани запрос из Burp/Caido в файл `req.txt`:
+Сохрани запрос из бурпа/каидо в файл `req.txt`:
 ```
 GET /api/v1/users HTTP/1.1
 Host: target.com
@@ -92,9 +85,9 @@ Cookie: session=abc123
 User-Agent: Mozilla/5.0
 ```
 ```bash
-python3 param6.py -r req.txt -w params.txt
+python3 paraminer.py -r req.txt -w params.txt
 ```
-**Это предпочтительный способ для аутентифицированного скана** — сохраняет все
+Это предпочтительный способ для аутентифицированного скана — сохраняет все
 заголовки и сессию. Большинство интересных параметров живут за авторизацией.
 
 ---
@@ -124,28 +117,28 @@ python3 param6.py -r req.txt -w params.txt
 
 | Оракул | Что ловит | Сильный сигнал |
 |--------|-----------|----------------|
-| **diff** | изменение статуса / длины / строк тела относительно baseline | смена статус-кода |
-| **time** (Mann-Whitney U) | стабильное замедление по TTFB (доп. обработка на бэке) | низкий p-value на стабильной цели |
-| **reflection** | канарейка отражена в теле + классификация контекста (XSS/redirect/...) | канарейка в HTML/JS |
-| **header-reflection** ★ | канарейка в Location/Set-Cookie/Content-Disposition/Link | отражение в Location |
-| **pollution / HPP** ★ | дубль ключа `p=a&p=b` меняет ответ → бэкенд разбирает ключ | разная сигнатура одиночного и дубля |
-| **boolean-pair** ★ | пара противоположных значений даёт **стабильно** разный ответ | 2+ стабильных расхождения |
-| **semantic-probe** | разные типы значений (int/null/array/...) → разные сигнатуры | 4+ distinct сигнатур |
-| **cache-key** | смена cf-cache-status / x-cache / age | MISS/BYPASS на фоне baseline-HIT |
-| **server-timing** | аномалия в Server-Timing метриках сквозь CDN-кэш | >3 MAD отклонение |
-| **cookie** | новый осмысленный Set-Cookie (не session/csrf) | новый именованный cookie |
-| **error** | разные значения → разные error-состояния | 3+ distinct состояния |
-| **js-state** | изменение inline-state SPA (__NEXT_DATA__, __NUXT__, Apollo, Vuex...) | diff состояния >5 байт |
-| **DOM-diff** | сравнение страницы после исполнения JS (XHR/storage/console) | канарейка в XHR-URL |
+| diff | изменение статуса / длины / строк тела относительно baseline | смена статус-кода |
+| time (Mann-Whitney U) | стабильное замедление по TTFB (доп. обработка на бэке) | низкий p-value на стабильной цели |
+| reflection | канарейка отражена в теле + классификация контекста (XSS/redirect/...) | канарейка в HTML/JS |
+| header-reflection ★ | канарейка в Location/Set-Cookie/Content-Disposition/Link | отражение в Location |
+| pollution / HPP ★ | дубль ключа `p=a&p=b` меняет ответ → бэкенд разбирает ключ | разная сигнатура одиночного и дубля |
+| boolean-pair ★ | пара противоположных значений даёт стабильно разный ответ | 2+ стабильных расхождения |
+| semantic-probe | разные типы значений (int/null/array/...) → разные сигнатуры | 4+ distinct сигнатур |
+| cache-key | смена cf-cache-status / x-cache / age | MISS/BYPASS на фоне baseline-HIT |
+| server-timing | аномалия в Server-Timing метриках сквозь CDN-кэш | >3 MAD отклонение |
+| cookie | новый осмысленный Set-Cookie (не session/csrf) | новый именованный cookie |
+| error | разные значения → разные error-состояния | 3+ distinct состояния |
+| js-state | изменение inline-state SPA (__NEXT_DATA__, __NUXT__, Apollo, Vuex...) | diff состояния >5 байт |
+| DOM-diff | сравнение страницы после исполнения JS (XHR/storage/console) | канарейка в XHR-URL |
 
 ★ — техники, добавленные в этой версии. Особенно ценны на CDN-кэшированных и
 non-reactive целях, где обычный diff слеп. `boolean-pair` — главный антишумовой
-детектор: случайный джиттер не даёт **стабильного** расхождения.
+детектор: случайный джиттер не даёт стабильного расхождения.
 
 Какие оракулы когда работают:
-- **discovery-стадия** (chunk-based): только diff + reflection (быстро).
-- **verify-стадия**: весь стек.
-- **direct-probe**: сразу весь стек по каждому параметру (discovery пропускается).
+- discovery-стадия (chunk-based): только diff + reflection (быстро).
+- verify-стадия: весь стек.
+- direct-probe: сразу весь стек по каждому параметру (discovery пропускается).
 
 ---
 
@@ -156,43 +149,36 @@ non-reactive целях, где обычный diff слеп. `boolean-pair` —
 + bisection), потом верификация уникальных кандидатов.
 
 ```bash
-python3 param6.py -u URL -w params.txt
+python3 paraminer.py -u URL -w params.txt
 ```
 - Быстрый на больших словарях.
-- Подходит для **реактивных** целей (отвечают на параметры заметно для diff).
+- Подходит для реактивных целей (отвечают на параметры заметно для diff).
 - Лимит: верифицируется максимум 200 топ-кандидатов по confidence.
 
 ### B. Stream-verify (`--stream-verify`)
-Discovery и verify работают **параллельно** через очередь: реальные находки
+Discovery и verify работают параллельно через очередь: реальные находки
 всплывают в первые минуты, а не в конце.
 
 ```bash
-python3 param6.py -u URL -w big_50k.txt --stream-verify
+python3 paraminer.py -u URL -w big_50k.txt --stream-verify
 ```
-- Для **очень больших** словарей (50k+), когда discovery идёт часами.
+- Для очень больших словарей (50k+), когда discovery идёт часами.
 - `--stream-verify-cap N` — защита от echo-целей (макс. кандидатов в очереди).
 
 ### C. Direct-probe (`--direct-probe`) — для CDN / non-reactive
-**Полностью обходит chunk-discovery.** Гоняет полный verify (включая
-принудительные boolean-pair / pollution / semantic-probe) по **каждому**
+Полностью обходит chunk-discovery. Гоняет полный verify (включая
+принудительные boolean-pair / pollution / semantic-probe) по каждому
 параметру отдельно.
 
 ```bash
-python3 param6.py -r req.txt -w focused.txt --direct-probe
+python3 paraminer.py -r req.txt -w focused.txt --direct-probe
 ```
 - Когда pre-flight говорит «NON-REACTIVE» (кэш / SSO-редирект / WAF глотает
-  query) — это **единственный рабочий путь**.
+  query) — это единственный рабочий путь.
 - Diff против uncached-baseline там бесполезен; помогают сигнатурные оракулы.
-- **Дорого:** ~13–18 запросов на параметр. На 99k словаре это сотни тысяч
-  запросов — тебя забанят. **Используй сокращённый/таргетированный словарь**
+- Дорого: ~13–18 запросов на параметр. На 99k словаре это сотни тысяч
+  запросов — тебя забанят. Используй сокращённый/таргетированный словарь
   (сотни–тысячи имён, например выжимку из JS-рекона).
-
-| | реактивная цель | большой словарь | CDN/non-reactive |
-|---|---|---|---|
-| Batched | ✅ | ⚠️ медленно | ❌ |
-| Stream-verify | ✅ | ✅ | ❌ |
-| Direct-probe | ✅ (дорого) | ❌ слишком дорого | ✅ |
-
 ---
 
 ## 7. Pre-flight check
@@ -201,13 +187,13 @@ python3 param6.py -r req.txt -w focused.txt --direct-probe
 (6–12 запросов): CDN/кэш, WAF, OAuth-редирект, реагирует ли цель на параметры
 вообще.
 
-- Если цель **NON-REACTIVE** — скан останавливается с объяснением.
+- Если цель NON-REACTIVE — скан останавливается с объяснением.
 - Переопределить: `--direct-probe` (правильный путь для CDN) или
   `--force-scan` (сканить как есть).
 
 ```bash
 # pre-flight сказал non-reactive → используем правильный режим:
-python3 param6.py -r req.txt -w focused.txt --direct-probe --force-scan
+python3 paraminer.py -r req.txt -w focused.txt --direct-probe --force-scan
 ```
 
 ---
@@ -215,8 +201,7 @@ python3 param6.py -r req.txt -w focused.txt --direct-probe --force-scan
 ## 8. Rate limiting и WAF
 
 ### Глобальный лимит запросов — `--max-rps` (ДЕФОЛТ 5.0)
-Ограничивает суммарную частоту по всем потокам. **5 rps — типовое правило
-bug-bounty (в т.ч. Standoff365/YooMoney).** Для запаса ставь меньше:
+Ограничивает суммарную частоту по всем потокам.
 ```bash
 --max-rps 4        # с запасом под лимит 5/сек
 --max-rps 0        # без ограничения (ТОЛЬКО свой стенд!)
@@ -235,16 +220,16 @@ CRITICAL) и не разгоняется обратно. Отключить: `--
 ## 9. DOM-oracle
 
 Для SPA (React/Vue/Angular), где параметр меняет только client-side рендер и
-невидим для HTTP-diff. Запускает headless Chromium, сравнивает страницу **после
-исполнения JS**: DOM, XHR-запросы, localStorage, console, cookies.
+невидим для HTTP-diff. Запускает headless Chromium, сравнивает страницу после
+исполнения JS: DOM, XHR-запросы, localStorage, console, cookies.
 
 ```bash
-python3 param6.py -u URL -w focused.txt --dom-oracle --dom-timeout 20
+python3 paraminer.py -u URL -w focused.txt --dom-oracle --dom-timeout 20
 ```
 - Только `mode=query`.
 - Требует `playwright` + `chromium`.
-- **Медленно:** verify становится однопоточным (Playwright thread-affinity),
-  1–3 сек на снимок. Используй на **маленьких** словарях (50–200) или поверх
+- Медленно: verify становится однопоточным (Playwright thread-affinity),
+  1–3 сек на снимок. Используй на маленьких словарях (50–200) или поверх
   кандидатов.
 - Если не установлен/упал baseline — тихо отключается, остальной скан идёт.
 - В этой версии не считает за сигнал канарейку, осевшую в адресной строке после
@@ -259,7 +244,7 @@ location.href), Paramancer добавляет этот URL в очередь и 
 словарём. Same-origin only.
 
 ```bash
-python3 param6.py -u https://target/ -w params.txt --pivot --pivot-depth 1 --pivot-max 10
+python3 paraminer.py -u https://target/ -w params.txt --pivot --pivot-depth 1 --pivot-max 10
 ```
 
 ---
@@ -290,7 +275,7 @@ python3 param6.py -u https://target/ -w params.txt --pivot --pivot-depth 1 --piv
 | `-m, --chunk-size N` | 25 | параметров в одном запросе (discovery) |
 | `-n, --calibration N` | 10 | baseline-запросов |
 | `-t, --timeout SEC` | 15 | таймаут запроса |
-| `--max-rps F` | **5.0** | глоб. лимит запросов/сек (0 = выкл) |
+| `--max-rps F` | 5.0 | глоб. лимит запросов/сек (0 = выкл) |
 
 ### Тюнинг оракулов
 | Флаг | Дефолт | Описание |
@@ -345,50 +330,50 @@ python3 param6.py -u https://target/ -w params.txt --pivot --pivot-depth 1 --piv
 
 ## 12. Готовые рецепты
 
-**Аутентифицированный API (REST/JSON):**
+Аутентифицированный API (REST/JSON):
 ```bash
-python3 param6.py -r req.txt -w api_params.txt --json \
+python3 paraminer.py -r req.txt -w api_params.txt --json \
   -c 2 --max-rps 4 --skip-error-oracle --confidence 0.45
 ```
 
-**CDN-кэшированная / non-reactive цель (твой hrlink-кейс):**
+CDN-кэшированная / non-reactive цель (твой hrlink-кейс):
 ```bash
-python3 param6.py -r req.txt -w focused.txt \
+python3 paraminer.py -r req.txt -w focused.txt \
   --direct-probe --force-scan -c 2 --max-rps 4
 ```
 
-**SPA (React/Vue) на маленьком словаре:**
+SPA (React/Vue) на маленьком словаре:
 ```bash
-python3 param6.py -u https://app/page -w small_200.txt \
+python3 paraminer.py -u https://app/page -w small_200.txt \
   --dom-oracle -c 2 --max-rps 4 --confidence 0.5
 ```
 
-**Большой словарь, хочу находки пораньше:**
+Большой словарь, хочу находки пораньше:
 ```bash
-python3 param6.py -r req.txt -w big_50k.txt \
+python3 paraminer.py -r req.txt -w big_50k.txt \
   --stream-verify --max-rps 4 --skip-error-oracle
 ```
 
-**Агрессивный WAF (Cloudflare/AWS):**
+Агрессивный WAF (Cloudflare/AWS):
 ```bash
-python3 param6.py -r req.txt -w focused.txt \
+python3 paraminer.py -r req.txt -w focused.txt \
   -c 2 -m 10 --max-chunk-hits 3 --max-rps 3 \
   --exclude-error-statuses --skip-error-oracle
 ```
 
-**Через Burp (для ручного просмотра трафика):**
+Через Burp (для ручного просмотра трафика):
 ```bash
-python3 param6.py -r req.txt -w params.txt --proxy http://127.0.0.1:8080 --max-rps 4
+python3 paraminer.py -r req.txt -w params.txt --proxy http://127.0.0.1:8080 --max-rps 4
 ```
 
-**Фаззинг заголовков:**
+Фаззинг заголовков:
 ```bash
-python3 param6.py -u https://target/ -w header_names.txt --headers --max-rps 4
+python3 paraminer.py -u https://target/ -w header_names.txt --headers --max-rps 4
 ```
 
-**Сохранить результат для отчёта:**
+Сохранить результат для отчёта:
 ```bash
-python3 param6.py -r req.txt -w params.txt --direct-probe -o findings.json --max-rps 4
+python3 paraminer.py -r req.txt -w params.txt --direct-probe -o findings.json --max-rps 4
 ```
 
 ---
@@ -406,53 +391,53 @@ python3 param6.py -r req.txt -w params.txt --direct-probe -o findings.json --max
 Шкала:
 | Score | Трактовка | Действие |
 |-------|-----------|----------|
-| **1.00** | сменился статус-код (404/302/500) | часто роутер/WAF — проверь руками |
-| **0.95** | канарейка в теле / сильный diff | почти точно реальный |
-| **0.85–0.94** | несколько оракулов сошлись | реальный, в работу |
-| **0.60–0.84** | один сильный сигнал | проверь руками |
-| **0.50–0.59** | слабый | часто FP (в этой версии их сильно меньше) |
+| 1.00 | сменился статус-код (404/302/500) | часто роутер/WAF — проверь руками |
+| 0.95 | канарейка в теле / сильный diff | почти точно реальный |
+| 0.85–0.94 | несколько оракулов сошлись | реальный, в работу |
+| 0.60–0.84 | один сильный сигнал | проверь руками |
+| 0.50–0.59 | слабый | часто FP (в этой версии их сильно меньше) |
 
 Маркер `?` (`[0.65]?`) = неподтверждённый кандидат discovery-стадии, ждёт verify.
 
 Context-классификатор подсказывает класс уязвимости для отражённых параметров:
 `html_text` → XSS, `href_attr`/`url_path` → open-redirect, `js_string_*` → XSS
-в JS, `meta_url_canonical` → canonical poisoning. **Это гипотезы, не находки.**
+в JS, `meta_url_canonical` → canonical poisoning. Это гипотезы, не находки.
 
 ---
 
 ## 14. Wordlists
 
-- **Маленький (1–5k)** — быстрые прогоны, Termux, direct-probe:
+- Маленький (1–5k) — быстрые прогоны, Termux, direct-probe:
   Arjun `params.txt`.
-- **Большой (50k+)** — зрелые программы: PortSwigger `param-miner` wordlist.
-- **Tech-specific** работают лучше generic: WordPress (`preview`, `p`, `cat`,
+- Большой (50k+) — зрелые программы: PortSwigger `param-miner` wordlist.
+- Tech-specific работают лучше generic: WordPress (`preview`, `p`, `cat`,
   `rest_route`), Laravel (`_token`, `_method`), и т.п.
-- **JS-рекон** — лучший источник: имена параметров, выдранные из JS самого
+- JS-рекон — лучший источник: имена параметров, выдранные из JS самого
   приложения. Объедини с generic, дедуплицируй:
   ```bash
   cat jsrecon_params.txt arjun_params.txt | sort -u > focused.txt
   ```
 
-Для **direct-probe** используй именно focused-словарь (сотни–тысячи), не 99k.
+Для direct-probe используй именно focused-словарь (сотни–тысячи), не 99k.
 
 ---
 
 ## 15. Что делать ПОСЛЕ находки
 
-Параметр — это вход, а не уязвимость. Дальше **вручную**:
+Параметр — это вход, а не уязвимость. Дальше вручную:
 
-1. **Подтверди** в Burp/браузере, что параметр реально влияет на ответ.
-2. **Прозондируй значениями:** пусто, длинное, отрицательное, чужой ID, JSON,
+1. Подтверди в Burp/браузере, что параметр реально влияет на ответ.
+2. Прозондируй значениями: пусто, длинное, отрицательное, чужой ID, JSON,
    спец-символы, path-traversal.
-3. **Сопоставь с классом уязвимости** под программу:
-   - `id`/`*Id`/`employeeId`/`legalEntityId` → **IDOR** (подставь чужой объект).
-   - `url`/`redirect`/`next`/`callback`/`*_uri` → **open-redirect / SSRF**.
-   - `file`/`path`/`template`/`include` → **LFI/RFI / SSTI**.
-   - отражение в теле → **XSS** (если влияет на чужие/чувствительные данные).
-   - `role`/`admin`/`debug`/`is_*` → **обход авторизации / privilege escalation**.
-4. **Собери PoC** строго в рамках testing policy программы (для RCE/SQLi/LFR —
+3. Сопоставь с классом уязвимости под программу:
+   - `id`/`*Id`/`employeeId`/`legalEntityId` → IDOR (подставь чужой объект).
+   - `url`/`redirect`/`next`/`callback`/`*_uri` → open-redirect / SSRF.
+   - `file`/`path`/`template`/`include` → LFI/RFI / SSTI.
+   - отражение в теле → XSS (если влияет на чужие/чувствительные данные).
+   - `role`/`admin`/`debug`/`is_*` → обход авторизации / privilege escalation.
+4. Собери PoC строго в рамках testing policy программы (для RCE/SQLi/LFR —
    только разрешённые действия!).
-5. **Репорти** одну уязвимость = один отчёт, с шагами и доказательством.
+5. Репорти одну уязвимость = один отчёт, с шагами и доказательством.
 
 > Raw-вывод сканера в отчёт не вставляй — его не примут. Нужна
 > подтверждённая уязвимость с воспроизведением.
@@ -461,51 +446,48 @@ Context-классификатор подсказывает класс уязв�
 
 ## 16. Troubleshooting
 
-**«Из словаря находит 0–1 параметр»**
+«Из словаря находит 0–1 параметр»
 На большом словаре в batched-режиме сигнал одного параметра тонет в чанке.
 Решение: `-m 5` (меньше чанк), `--confidence 0.35`, `--stream-verify`. На
 CDN-цели — `--direct-probe`.
 
-**«Все находки с одинаковым score (напр. 0.78)»**
+«Все находки с одинаковым score (напр. 0.78)»
 Это были шумовые FP (timing-джиттер + redirect-echo). В текущей версии
 устранены: gate ≥0.55 + фильтр канарейки в final_url + ужесточённый timing.
 Если всё ещё видишь — подними `--confidence 0.6`.
 
-**«Pre-flight: NON-REACTIVE, скан остановился»**
+«Pre-flight: NON-REACTIVE, скан остановился»
 Цель за кэшем/SSO. Используй `--direct-probe --force-scan`. Если и так пусто —
 landing честно не принимает параметры; ищи реальные API-эндпоинты за авторизацией.
 
-**«Очень медленно»**
+«Очень медленно»
 Это `--max-rps 5` (специально, под правила). На своём стенде — `--max-rps 0`.
 Плюс `--skip-error-oracle` ускоряет verify в ~6 раз.
 
-**«Rate-limit / 429 / WAF challenge»**
+«Rate-limit / 429 / WAF challenge»
 Снизь `--max-rps 2-3`, `-c 2`, добавь `--max-chunk-hits 3`. Авто-адаптация уже
 включена.
 
-**«DOM-oracle не работает»**
+«DOM-oracle не работает»
 `pip install playwright && playwright install chromium`. Только `mode=query`.
 На больших словарях не используй — однопоточный и медленный.
 
-**«Нужна сессия / куки»**
+«Нужна сессия / куки»
 Используй `-r req.txt` с полным запросом из Burp (сохранит Cookie/Authorization).
 
 ---
 
-## 17. Чеклист bug-bounty прогона
+## 17. Чеклист багбаунт прогона
 
-- [ ] Цель **в scope** активной программы / это мой стенд.
-- [ ] Прочитал **testing policy** (что можно при RCE/SQLi/LFR).
+- [ ] Цель в scope активной программы / это мой стенд.
+- [ ] Прочитал testing policy (что можно при RCE/SQLi/LFR/этцетра).
 - [ ] `--max-rps` ≤ лимита программы (дефолт 5, ставлю 4 для запаса).
 - [ ] Запрос с сессией сохранён в `req.txt` (`-r`).
-- [ ] Выбран правильный режим: реактивная → batched/stream; CDN → direct-probe.
+- [ ] Выбран правильный режим: реактивная -> batched/stream; CDN -> direct-probe.
 - [ ] Словарь подходящий: focused для direct-probe, большой для stream.
 - [ ] Результаты в `-o findings.json`.
-- [ ] Каждую находку **проверил вручную** перед выводами.
-- [ ] В отчёт идёт подтверждённая уязвимость + PoC, **не** вывод сканера.
+- [ ] Каждую находку проверил вручную перед выводами.
+- [ ] В отчёт идёт подтверждённая уязвимость + PoC, НЕ вывод сканера.
 - [ ] Конфиденциальность: не публикую найденное без разрешения программы.
 
 ---
-
-*Сканер — это разведка. Награду приносит ручная работа поверх найденных
-параметров и аккуратный отчёт в рамках правил программы.*
