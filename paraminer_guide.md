@@ -33,9 +33,9 @@
 
 Идея: послать запрос с параметром, которого фронтенд не использует, и понять по
 ответу, заметил ли его бэкенд. Сам по себе один запрос ничего не скажет —
-ответы шумят (таймстампы, CSRF, сетевой джиттер). Поэтому Paramancer:
+ответы шумят (таймстампы, CSRF, сетевой джиттер). Поэтому Paraminer:
 
-1. Калибруется — делает N запросов без параметров и запоминает «нормальный»
+1. Калибруется — делает N запросов без параметров и запоминает нормальный
    диапазон (статусы, длины, тайминги TTFB, стабильные строки тела,
    Server-Timing, cookies, inline-state).
 2. Ищет кандидатов (discovery) — быстро прогоняет словарь.
@@ -44,7 +44,7 @@
 
 Ключевой принцип последней версии: находка засчитывается, только если есть
 хотя бы один самостоятельно убедительный сигнал (score ≥ 0.55). Несколько
-слабых/шумовых сигналов больше не «складываются» в ложную находку.
+слабых/шумовых сигналов больше не складываются в ложную находку.
 
 ---
 
@@ -52,9 +52,9 @@
 
 ```bash
 # Базово — ничего ставить не надо, только Python 3.7+
-python3 paraminer.py --help
-python3 paraminer.py --help-ru      # подробная встроенная справка на русском
-python3 paraminer.py --selftest     # самотест (поднимает локальные серверы)
+python3 Paraminer.py --help
+python3 Paraminer.py --help-ru      # подробная встроенная справка на русском
+python3 Paraminer.py --selftest     # самотест (поднимает локальные серверы)
 
 # Опционально — DOM-oracle для SPA:
 pip install playwright
@@ -70,7 +70,7 @@ Termux (Android): работает из коробки, добавляй `--no-c
 
 ### `-u/--url` — простой
 ```bash
-python3 paraminer.py -u "https://target/api/users" -w params.txt
+python3 Paraminer.py -u "https://target/api/users" -w params.txt
 ```
 Доп. опции к нему: `-X POST`, `-H "Authorization: Bearer ..."`,
 `-d 'body'`, `-b 'session=...'` (cookie).
@@ -85,7 +85,7 @@ Cookie: session=abc123
 User-Agent: Mozilla/5.0
 ```
 ```bash
-python3 paraminer.py -r req.txt -w params.txt
+python3 Paraminer.py -r req.txt -w params.txt
 ```
 Это предпочтительный способ для аутентифицированного скана — сохраняет все
 заголовки и сессию. Большинство интересных параметров живут за авторизацией.
@@ -112,7 +112,7 @@ python3 paraminer.py -r req.txt -w params.txt
 
 ## 5. Оракулы
 
-Оракул — независимый детектор «бэкенд среагировал». Каждый даёт score 0..1.
+Оракул — независимый детектор типа бэкенд среагировал. Каждый даёт score 0..1.
 Итог агрегируется, плюс действует gate ≥0.55.
 
 | Оракул | Что ловит | Сильный сигнал |
@@ -149,7 +149,7 @@ non-reactive целях, где обычный diff слеп. `boolean-pair` —
 + bisection), потом верификация уникальных кандидатов.
 
 ```bash
-python3 paraminer.py -u URL -w params.txt
+python3 Paraminer.py -u URL -w params.txt
 ```
 - Быстрый на больших словарях.
 - Подходит для реактивных целей (отвечают на параметры заметно для diff).
@@ -160,7 +160,7 @@ Discovery и verify работают параллельно через очер�
 всплывают в первые минуты, а не в конце.
 
 ```bash
-python3 paraminer.py -u URL -w big_50k.txt --stream-verify
+python3 Paraminer.py -u URL -w big_50k.txt --stream-verify
 ```
 - Для очень больших словарей (50k+), когда discovery идёт часами.
 - `--stream-verify-cap N` — защита от echo-целей (макс. кандидатов в очереди).
@@ -171,9 +171,9 @@ python3 paraminer.py -u URL -w big_50k.txt --stream-verify
 параметру отдельно.
 
 ```bash
-python3 paraminer.py -r req.txt -w focused.txt --direct-probe
+python3 Paraminer.py -r req.txt -w focused.txt --direct-probe
 ```
-- Когда pre-flight говорит «NON-REACTIVE» (кэш / SSO-редирект / WAF глотает
+- Когда pre-flight говорит NON-REACTIVE (кэш / SSO-редирект / WAF глотает
   query) — это единственный рабочий путь.
 - Diff против uncached-baseline там бесполезен; помогают сигнатурные оракулы.
 - Дорого: ~13–18 запросов на параметр. На 99k словаре это сотни тысяч
@@ -193,7 +193,7 @@ python3 paraminer.py -r req.txt -w focused.txt --direct-probe
 
 ```bash
 # pre-flight сказал non-reactive → используем правильный режим:
-python3 paraminer.py -r req.txt -w focused.txt --direct-probe --force-scan
+python3 Paraminer.py -r req.txt -w focused.txt --direct-probe --force-scan
 ```
 
 ---
@@ -224,7 +224,7 @@ CRITICAL) и не разгоняется обратно. Отключить: `--
 исполнения JS: DOM, XHR-запросы, localStorage, console, cookies.
 
 ```bash
-python3 paraminer.py -u URL -w focused.txt --dom-oracle --dom-timeout 20
+python3 Paraminer.py -u URL -w focused.txt --dom-oracle --dom-timeout 20
 ```
 - Только `mode=query`.
 - Требует `playwright` + `chromium`.
@@ -240,11 +240,11 @@ python3 paraminer.py -u URL -w focused.txt --dom-oracle --dom-timeout 20
 ## 10. Pivot
 
 Когда канарейка попадает в URL внутри ответа (href, src, og:url,
-location.href), Paramancer добавляет этот URL в очередь и сканирует тем же
+location.href), Paraminer добавляет этот URL в очередь и сканирует тем же
 словарём. Same-origin only.
 
 ```bash
-python3 paraminer.py -u https://target/ -w params.txt --pivot --pivot-depth 1 --pivot-max 10
+python3 Paraminer.py -u https://target/ -w params.txt --pivot --pivot-depth 1 --pivot-max 10
 ```
 
 ---
@@ -332,48 +332,48 @@ python3 paraminer.py -u https://target/ -w params.txt --pivot --pivot-depth 1 --
 
 Аутентифицированный API (REST/JSON):
 ```bash
-python3 paraminer.py -r req.txt -w api_params.txt --json \
+python3 Paraminer.py -r req.txt -w api_params.txt --json \
   -c 2 --max-rps 4 --skip-error-oracle --confidence 0.45
 ```
 
 CDN-кэшированная / non-reactive цель (твой hrlink-кейс):
 ```bash
-python3 paraminer.py -r req.txt -w focused.txt \
+python3 Paraminer.py -r req.txt -w focused.txt \
   --direct-probe --force-scan -c 2 --max-rps 4
 ```
 
 SPA (React/Vue) на маленьком словаре:
 ```bash
-python3 paraminer.py -u https://app/page -w small_200.txt \
+python3 Paraminer.py -u https://app/page -w small_200.txt \
   --dom-oracle -c 2 --max-rps 4 --confidence 0.5
 ```
 
 Большой словарь, хочу находки пораньше:
 ```bash
-python3 paraminer.py -r req.txt -w big_50k.txt \
+python3 Paraminer.py -r req.txt -w big_50k.txt \
   --stream-verify --max-rps 4 --skip-error-oracle
 ```
 
 Агрессивный WAF (Cloudflare/AWS):
 ```bash
-python3 paraminer.py -r req.txt -w focused.txt \
+python3 Paraminer.py -r req.txt -w focused.txt \
   -c 2 -m 10 --max-chunk-hits 3 --max-rps 3 \
   --exclude-error-statuses --skip-error-oracle
 ```
 
 Через Burp (для ручного просмотра трафика):
 ```bash
-python3 paraminer.py -r req.txt -w params.txt --proxy http://127.0.0.1:8080 --max-rps 4
+python3 Paraminer.py -r req.txt -w params.txt --proxy http://127.0.0.1:8080 --max-rps 4
 ```
 
 Фаззинг заголовков:
 ```bash
-python3 paraminer.py -u https://target/ -w header_names.txt --headers --max-rps 4
+python3 Paraminer.py -u https://target/ -w header_names.txt --headers --max-rps 4
 ```
 
 Сохранить результат для отчёта:
 ```bash
-python3 paraminer.py -r req.txt -w params.txt --direct-probe -o findings.json --max-rps 4
+python3 Paraminer.py -r req.txt -w params.txt --direct-probe -o findings.json --max-rps 4
 ```
 
 ---
@@ -424,55 +424,53 @@ Context-классификатор подсказывает класс уязв�
 
 ## 15. Что делать ПОСЛЕ находки
 
-Параметр — это вход, а не уязвимость. Дальше вручную:
+Параметр — это вход, дальше вручную:
 
-1. Подтверди в Burp/браузере, что параметр реально влияет на ответ.
+1. Подтверди в Бурпе/etc, что параметр реально влияет на ответ.
 2. Прозондируй значениями: пусто, длинное, отрицательное, чужой ID, JSON,
-   спец-символы, path-traversal.
+   спец-символы, траверсал / иное чудо
 3. Сопоставь с классом уязвимости под программу:
-   - `id`/`*Id`/`employeeId`/`legalEntityId` → IDOR (подставь чужой объект).
-   - `url`/`redirect`/`next`/`callback`/`*_uri` → open-redirect / SSRF.
-   - `file`/`path`/`template`/`include` → LFI/RFI / SSTI.
-   - отражение в теле → XSS (если влияет на чужие/чувствительные данные).
-   - `role`/`admin`/`debug`/`is_*` → обход авторизации / privilege escalation.
-4. Собери PoC строго в рамках testing policy программы (для RCE/SQLi/LFR —
-   только разрешённые действия!).
-5. Репорти одну уязвимость = один отчёт, с шагами и доказательством.
+   - `id`/`*Id`/`employeeId`/`legalEntityId` -> IDOR (подставь чужой объект).
+   - `url`/`redirect`/`next`/`callback`/`*_uri` -> open-redirect / SSRF.
+   - `file`/`path`/`template`/`include` -> LFI/RFI / SSTI.
+   - отражение в теле -> XSS (если влияет на что-то).
+   - `role`/`admin`/`debug`/`is_*` -> обход авторизации / PE.
+4. Собери PoC.
+5. Репорти.
 
-> Raw-вывод сканера в отчёт не вставляй — его не примут. Нужна
-> подтверждённая уязвимость с воспроизведением.
+>>> Пуш чисто сканерского результа в отчет - гиблая идея. Не надо.
 
 ---
 
 ## 16. Troubleshooting
 
-«Из словаря находит 0–1 параметр»
+Из словаря находит 0–1 параметр
 На большом словаре в batched-режиме сигнал одного параметра тонет в чанке.
 Решение: `-m 5` (меньше чанк), `--confidence 0.35`, `--stream-verify`. На
 CDN-цели — `--direct-probe`.
 
-«Все находки с одинаковым score (напр. 0.78)»
+Все находки с одинаковым score (напр. 0.78)
 Это были шумовые FP (timing-джиттер + redirect-echo). В текущей версии
 устранены: gate ≥0.55 + фильтр канарейки в final_url + ужесточённый timing.
 Если всё ещё видишь — подними `--confidence 0.6`.
 
-«Pre-flight: NON-REACTIVE, скан остановился»
+Pre-flight: NON-REACTIVE, скан остановился
 Цель за кэшем/SSO. Используй `--direct-probe --force-scan`. Если и так пусто —
 landing честно не принимает параметры; ищи реальные API-эндпоинты за авторизацией.
 
-«Очень медленно»
+Очень медленно
 Это `--max-rps 5` (специально, под правила). На своём стенде — `--max-rps 0`.
 Плюс `--skip-error-oracle` ускоряет verify в ~6 раз.
 
-«Rate-limit / 429 / WAF challenge»
+Rate-limit / 429 / WAF challenge
 Снизь `--max-rps 2-3`, `-c 2`, добавь `--max-chunk-hits 3`. Авто-адаптация уже
 включена.
 
-«DOM-oracle не работает»
+DOM-oracle не работает
 `pip install playwright && playwright install chromium`. Только `mode=query`.
 На больших словарях не используй — однопоточный и медленный.
 
-«Нужна сессия / куки»
+Нужна сессия / куки
 Используй `-r req.txt` с полным запросом из Burp (сохранит Cookie/Authorization).
 
 ---
