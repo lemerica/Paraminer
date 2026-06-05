@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
 """
-paraminer.py v0.5
+paraminer.py 
 ==================
 Multi-oracle hidden parameter discovery scanner.
 Single-file, stdlib-only. Linux / macOS / Termux (Android).
