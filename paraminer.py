@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-paramancer.py v0.5
+paraminer.py v0.5
 ==================
 Multi-oracle hidden parameter discovery scanner.
 Single-file, stdlib-only. Linux / macOS / Termux (Android).
@@ -15,7 +15,7 @@ Single-file, stdlib-only. Linux / macOS / Termux (Android).
   • Welch's t-test для time-oracle (статистически чистый p-value)
   • Termux compatible (auto color, ASCII-only output mode)
 
-Подробная справка: python3 paramancer.py --help
+Подробная справка: python3 paraminer.py --help
 """
 
 import argparse, gzip, hashlib, json, math, os, queue, random, re, socket, socketserver, ssl
@@ -149,7 +149,7 @@ def http_request(method, url, headers=None, body=None, timeout=15, proxy=None):
 
     headers.setdefault('Host', parsed.netloc)
     headers.setdefault('User-Agent',
-                       'Mozilla/5.0 (X11; Linux x86_64) paramancer/0.5')
+                       'Mozilla/5.0 (X11; Linux x86_64) paraminer/0.5')
     headers.setdefault('Accept', '*/*')
     headers.setdefault('Accept-Encoding', 'gzip, deflate')
     headers.setdefault('Connection', 'close')
@@ -1664,7 +1664,7 @@ class DOMScanner:
         from playwright.sync_api import sync_playwright
         self.timeout = timeout * 1000  # playwright в ms
         self.headless = headless
-        self.user_agent = user_agent or 'paramancer/0.6 DOMDiff'
+        self.user_agent = user_agent or 'paraminer/0.6 DOMDiff'
         self._pw = None
         self._browser = None
         self._lock = threading.Lock()
@@ -2629,7 +2629,7 @@ def load_wordlist(path):
 
 HELP_RU = """
 ==============================================================================
- paramancer v0.5 — РУКОВОДСТВО ПО ИСПОЛЬЗОВАНИЮ
+ paraminer v0.5 — РУКОВОДСТВО ПО ИСПОЛЬЗОВАНИЮ
 ==============================================================================
 
 ЧТО ДЕЛАЕТ
@@ -2641,9 +2641,9 @@ HELP_RU = """
 
 БЫСТРЫЙ СТАРТ
 -------------
-  python3 paramancer.py -u https://target.com/api/users -w wordlist.txt
-  python3 paramancer.py -u https://target.com/ -w wordlist.txt --pivot
-  python3 paramancer.py --selftest
+  python3 paraminer.py -u https://target.com/api/users -w wordlist.txt
+  python3 paraminer.py -u https://target.com/ -w wordlist.txt --pivot
+  python3 paraminer.py --selftest
 
 ОСНОВНЫЕ ФЛАГИ
 --------------
@@ -2747,14 +2747,14 @@ PIVOT (рекурсивный скан найденных URL'ов)
 
 PRE-FLIGHT CHECK (v0.5)
 -----------------------
-  По умолчанию paramancer ВСЕГДА делает быструю диагностику target'а перед
+  По умолчанию paraminer ВСЕГДА делает быструю диагностику target'а перед
   скан-фазой (6-12 запросов). Определяет:
     • CDN/cache (Cloudflare, Fastly, Akamai, CloudFront, Varnish)
     • WAF (CF challenge, AWS WAF, Akamai, Imperva)
     • OAuth strict-validation
     • Reactive params (отвечает ли вообще на параметры)
 
-  Если target определён как «non-reactive» — paramancer ОСТАНОВИТСЯ
+  Если target определён как «non-reactive» — paraminer ОСТАНОВИТСЯ
   с объяснением. Используй --force-scan чтобы пропустить эту проверку.
 
   --no-preflight            Пропустить pre-flight полностью
@@ -2867,8 +2867,8 @@ def main():
         print(HELP_RU); sys.exit(0)
 
     ap = argparse.ArgumentParser(
-        prog='paramancer.py',
-        description='paramancer v0.5 — multi-oracle hidden parameter discovery. '
+        prog='paraminer.py',
+        description='paraminer v0.5 — multi-oracle hidden parameter discovery. '
                     'Используй --help-ru для подробной справки на русском.',
         epilog='Examples:\n'
                '  %(prog)s -u https://target.com/api -w params.txt\n'
@@ -2982,7 +2982,7 @@ def main():
 
     auto_color_setup(force_disable=args.no_color)
 
-    # Глобальный rate-limit (по умолчанию 5 rps — правило bug-bounty программы).
+    # Глобальный rate-limit (по умолчанию 5 rps — правило  программы).
     RATE_LIMITER.configure(args.max_rps)
     if args.max_rps and args.max_rps > 0:
         log(f'[*] Global rate limit: {args.max_rps:g} req/s (all threads)')
@@ -3180,7 +3180,7 @@ def _free_port():
 
 
 def run_selftest():
-    print('=== paramancer v0.5 self-test ===\n')
+    print('=== paraminer v0.5 self-test ===\n')
 
     # Test 1: basic oracles
     print('--- Test 1: oracles (diff/time/reflection/cache) ---')
