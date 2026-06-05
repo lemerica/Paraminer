@@ -310,9 +310,9 @@ def mannwhitney_u(sample_a, sample_b):
 
 def modified_z_score(value, baseline_median, baseline_mad):
     """Modified Z-score (Iglewicz-Hoaglin, 1993). Робастный аналог Z-score
-    через MAD. NIST рекомендует |z_mod| > 3.5 как порог outlier-detection.
+    через MAD. NIST рекомендует |z_mod| > 3.5 как порог outlier-detection. На это в основном я полагался.
 
-    Константа 0.6745 = Φ⁻¹(0.75), приводит шкалу к совместимости с обычным Z
+    Константа 0.6745 = Φ в -1 (0.75), приводит шкалу к совместимости с обычным Z
     для нормального распределения.
     """
     if baseline_mad <= 0: return 0.0
@@ -796,13 +796,13 @@ def _detect_attr_context(tag_frag, after):
 
 
 # ============================================================================
-#  PIVOT EXTRACTION — FIXED v0.5
+#  PIVOT EXTRACTION — FIXED
 # ============================================================================
 
 def extract_pivot_urls(resp_text, canary, base_url):
     """
     Найти URL'ы в response, в которых попала канарейка.
-    v0.5 fix: ищем канарейку В ЦЕЛОМ response, потом смотрим контекст,
+    fix: ищем канарейку В ЦЕЛОМ response, потом смотрим контекст,
     а не только в URL-attribute regex. Это ловит JS-redirects и data-attrs.
     """
     pivots = set()
@@ -1018,21 +1018,7 @@ def diff_oracle(resp, calib, exclude_error_statuses=False):
     return 0.0, None
 
 
-def time_oracle_ttest(probe_times, calib, p_threshold=0.001):
-    """Time-based oracle using Mann-Whitney U test (rank-sum).
-
-    Why Mann-Whitney instead of Welch's t-test:
-    - Network timings are right-skewed (long tail from random delays),
-      not normally distributed. t-test assumes normality.
-    - Mann-Whitney is non-parametric — works on any distribution.
-    - Compares medians (rank-based) instead of means — robust to outliers.
-
-    Adaptive threshold: on noisy targets we tighten the p-value cutoff
-    to avoid false positives from random jitter.
-
-    Output uses Modified Z-score (Iglewicz-Hoaglin) for the deviation magnitude
-    — standard outlier-detection notation, recognised by NIST.
-    """
+def time_oracle_ttest(probe_times, calib, p_threshold=
     if not probe_times or len(calib.times) < 3: return 0.0, None
 
     # Adaptive: tighten p-threshold on noisy targets
@@ -1297,7 +1283,7 @@ def js_state_oracle(resp, calib):
 
 def semantic_probe_oracle(base_req, param_name, mode, proxy, timeout, governor=None):
     """
-    NEW v0.5.2: Усиленный error_oracle с семантическими probe-значениями.
+   Усиленный error_oracle с семантическими probe-значениями.
     Шлёт параметр с разными типами значений и анализирует distinct response
     signatures. Работает даже там, где random canary не отражается.
     
@@ -1348,7 +1334,7 @@ def semantic_probe_oracle(base_req, param_name, mode, proxy, timeout, governor=N
         return 0.5, f'semantic probe: {distinct}/{len(test_values)} distinct signatures'
 
     # Timing variance — ОЧЕНЬ слабый и шумный сигнал через интернет.
-    # Раньше порог (outlier>4, штук>=2) ловил обычный сетевой джиттер и давал
+    # порог (outlier>4, штук>=2) ловил обычный сетевой джиттер и давал
     # 0.45 на КАЖДЫЙ параметр. Теперь: требуем редкие сильные выбросы и
     # достаточную стабильность baseline-таймингов самих проб, иначе не верим.
     if len(timings) >= 8:
@@ -1365,15 +1351,8 @@ def semantic_probe_oracle(base_req, param_name, mode, proxy, timeout, governor=N
 
 
 def header_reflection_oracle(resp, canaries):
-    """Параметр, отражённый в RESPONSE-ЗАГОЛОВКЕ (не в теле).
-
-    Сильный и часто упускаемый сигнал: канарейка в Location (redirect),
-    Set-Cookie, Content-Disposition, Link, X-* и т.п. означает, что бэкенд
-    прочитал значение и положил его в заголовок. Это и реальный indicator
-    обработки, и нередко прямой вектор. 
-    Не путать с reflection_oracle, который уже смотрит заголовки, но в общей
-    куче; здесь отдаём отдельный, более точный сигнал с классификацией места.
-    """
+места.
+  
     if not resp.headers:
         return 0.0, None
     # заголовки, попадание в которые особенно показательно
@@ -1460,8 +1439,7 @@ def pollution_oracle(base_req, param_name, mode, proxy, timeout,
 
 def boolean_pair_oracle(base_req, param_name, mode, proxy, timeout,
                         requester=None, repeats=3):
-    """Boolean-pair / contradiction oracle.
-
+    """
     Шлём пару ПРОТИВОПОЛОЖНЫХ значений несколько раз и проверяем, что разница
     между ними СТАБИЛЬНА (не плавает от запроса к запросу). Стабильное
     расхождение = детерминированная реакция бэкенда на значение, а не сетевой
@@ -1546,9 +1524,7 @@ def aggregate(*signals):
 #  DOM-DIFF ORACLE (v0.6, optional, requires playwright)
 # ============================================================================
 #
-#  Эта секция требует Playwright. Установка:
-#    pip install playwright
-#    playwright install chromium
+#  Эта секция требует Playwright. Установка описана в гайде.
 #
 #  DOM-diff сравнивает не HTTP-response, а финальное состояние страницы
 #  ПОСЛЕ выполнения всего клиентского JS. Детектит параметры, которые
@@ -1578,7 +1554,6 @@ def _check_playwright():
 
 
 class DOMSnapshot:
-    """Снимок состояния страницы после выполнения JS."""
     __slots__ = ('body_hash', 'body_size', 'xhr_calls', 'console_logs',
                  'local_storage', 'session_storage', 'cookies',
                  'final_url', 'title')
@@ -1596,7 +1571,7 @@ class DOMSnapshot:
         self.title = title
 
     def diff(self, other):
-        """Сравнение с другим snapshot. Возвращает список различий."""
+    
         diffs = []
         if self.body_hash != other.body_hash:
             size_change = other.body_size - self.body_size
@@ -1756,10 +1731,8 @@ class DOMScanner:
 
 def dom_diff_oracle(base_url, param_name, canary, mode, dom_scanner,
                     baseline_snapshot, additional_query=None):
-    """
-    Запускает DOM-diff для одного параметра.
-    Возвращает (score, reason).
-    """
+  
+  
     if mode != 'query':
         # DOM-diff пока работает только с query-параметрами
         # (для body нужна была бы XHR-инъекция, это другое)
@@ -2052,9 +2025,6 @@ class Scanner:
                       f'Time-oracle threshold tightened automatically.', 'warn')
 
     def _init_dom_oracle(self):
-        """Lazy-init DOMScanner и baseline snapshot.
-        ВАЖНО: должен вызываться из того же треда, где будут вызовы snapshot()
-        (Playwright sync API привязан к треду создания)."""
         if not self.use_dom_oracle: return
         if self.dom_scanner is not None: return  # уже инициализировано
         try:
@@ -2097,7 +2067,7 @@ class Scanner:
         mid = len(params_chunk) // 2
         result = (self.test_chunk(params_chunk[:mid], depth + 1) +
                   self.test_chunk(params_chunk[mid:], depth + 1))
-        # Раньше тут было `return []` — целый чанк выбрасывался, если из него
+        # тут было `return []` — целый чанк выбрасывался, если из него
         # вылезало больше max_chunk_hits кандидатов. На шумных/echo-таргетах это
         # уничтожало реальные находки. Теперь обрезаем по score, а не теряем всё.
         if len(result) > self.max_chunk_hits:
@@ -2148,7 +2118,7 @@ class Scanner:
             return self._request(m, u, h, b, timeout=self.timeout,
                                  proxy=self.proxy)
 
-        # NEW: boolean-pair oracle — стабильное расхождение противоположных
+        # отныне наварил boolean-pair oracle — стабильное расхождение противоположных
         # значений. Сильный антишумовой сигнал. Гоняем в direct-probe всегда,
         # иначе — как подтверждение когда есть лишь слабые сигналы.
         weak_only = signals and all(s < 0.55 for s, _ in signals)
@@ -2160,7 +2130,7 @@ class Scanner:
                 if bp[0] > 0: signals.append(bp)
             except Exception: pass
 
-            # NEW: parameter-pollution oracle (дубль ключа)
+            # теперь тут parameter-pollution oracle (дубль ключа)
             try:
                 pp = pollution_oracle(self.base_req, name, self.mode,
                                       self.proxy, self.timeout, self.calib,
@@ -2168,7 +2138,7 @@ class Scanner:
                 if pp[0] > 0: signals.append(pp)
             except Exception: pass
 
-        # NEW v0.5.2: даже если "классические" оракулы не сработали,
+        # даже если классические оракулы не сработали,
         # запускаем semantic probe — он может детектить параметры на
         # CDN-кэшированных целях через distinct response signatures.
         # В direct-probe режиме запускаем ВСЕГДА (это основной оракул там),
@@ -2194,7 +2164,7 @@ class Scanner:
         # включён и хотя бы один лёгкий сигнал уже есть. Это работает как
         # доп. подтверждение для борьбы с false positives, особенно для SPA.
         if self.use_dom_oracle:
-            # Lazy-init из этого треда: Playwright sync API thread-affinity.
+            # Lazy-init оттуда: Playwright sync API thread-affinity.
             # max_workers=1 в run() гарантирует, что все verify_param идут отсюда.
             self._init_dom_oracle()
         if self.use_dom_oracle and self.dom_scanner and self.dom_baseline:
@@ -2211,10 +2181,11 @@ class Scanner:
 
         total, reasons = aggregate(*signals)
         if total < self.confidence_threshold: return None
-        # NEW: anti-false-positive gate. Несколько слабых сигналов (timing-шум +
+        # теперь тут anti-false-positive gate. Несколько слабых сигналов (timing-шум +
         # redirect-echo) перемножаются в высокий total через aggregate(), но это
         # ничего не значит. Требуем хотя бы ОДИН самостоятельно убедительный
-        # сигнал. Иначе — отбрасываем (это и убивало те 12 фантомных 0.78).
+        # сигнал. Иначе — отбрасываем (это и убивало те 12 фантомных 0.78, что были раннее)
+    
         if not any(s >= 0.55 for s, _ in signals):
             return None
 
@@ -2237,20 +2208,7 @@ class Scanner:
         return self._run_batched(wordlist)
 
     def _run_direct_probe(self, wordlist):
-        """Direct-probe режим (для CDN / non-reactive таргетов).
-
-        Полностью обходит chunk-based discovery (где сигнал одного параметра
-        тонет среди мусорных в общем запросе, а diff против uncached-baseline
-        не работает). Вместо этого гоняет verify_param по КАЖДОМУ параметру
-        напрямую — со всеми оракулами, включая принудительный semantic_probe,
-        который детектит обработку параметра по distinct response-signatures
-        даже когда HTML отдаётся из кэша байт-в-байт.
-
-        Стоит дорого: ~13-18 запросов на параметр (7 verify + ~11 semantic +
-        опц. 6 error). На 99k словаре это очень долго — режим рассчитан на
-        прицельный прогон по сокращённому/таргетированному словарю, либо на
-        "оставить на ночь". Дедуп и rate-limit governor работают как обычно.
-        """
+  
         # Дедуп входного словаря с сохранением порядка
         seen = set(); uniq_words = []
         for w in wordlist:
@@ -2303,17 +2261,7 @@ class Scanner:
         return self.findings
 
     def _run_streaming(self, wordlist):
-        """Streaming pipeline: discovery и verify работают параллельно.
-        Кандидат → очередь → verify-worker → finding (всё в реальном времени).
-
-        Архитектура (producer-consumer):
-        - Discovery workers (ThreadPool): test_chunk → push в self._verify_queue
-        - Verify worker (single thread, для Playwright thread-affinity):
-          забирает из очереди, делает verify_param (+DOM), эмитит finding
-
-        Защита от echo-таргетов: cap на размер очереди, низкоприоритетные
-        кандидаты отбрасываются.
-        """
+        
         cs = min(self.chunk_size, max(5, len(wordlist) // 4))
         chunks = [wordlist[i:i + cs] for i in range(0, len(wordlist), cs)]
         self._log(f'[*] Streaming scan: {len(wordlist)} params in {len(chunks)} chunks '
@@ -2513,7 +2461,7 @@ class Scanner:
         verified = [0]
         # DOM-oracle нельзя гонять из нескольких потоков — Playwright sync API
         # привязан к треду, где был запущен. При use_dom_oracle делаем verify
-        # однопоточным. Это не критично: DOM-snapshot сам по себе медленный.
+        # однопоточным. Хотя в целом похуй, DOM-snapshot сам по себе медленный.
         verify_workers = 1 if self.use_dom_oracle else 2
         with ThreadPoolExecutor(max_workers=verify_workers) as ex:
             futures = {ex.submit(self.verify_param, n, s, r): n
@@ -2620,7 +2568,7 @@ def load_wordlist(path):
 
 HELP_RU = """
 ==============================================================================
- paraminer v0.5 — РУКОВОДСТВО ПО ИСПОЛЬЗОВАНИЮ
+ paraminer — РУКОВОДСТВО ПО ИСПОЛЬЗОВАНИЮ
 ==============================================================================
 
 ЧТО ДЕЛАЕТ
