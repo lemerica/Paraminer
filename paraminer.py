@@ -93,13 +93,7 @@ def _decode_body(body_bytes, headers):
 
 
 class _GlobalRateLimiter:
-    """Глобальный token-bucket: ограничивает СУММАРНУЮ частоту HTTP-запросов
-    через все потоки. Нужен для соблюдения правил программ bug bounty
-    (например Standoff365 / YooMoney: не более 5 запросов в секунду).
-
-    Реализация: пополняем токены непрерывно со скоростью rps, перед каждым
-    запросом ждём, пока появится хотя бы 1 токен. Поток-безопасно.
-    """
+  
     def __init__(self):
         self.rps = 0.0          # 0 = выключен
         self._lock = threading.Lock()
@@ -1377,9 +1371,7 @@ def header_reflection_oracle(resp, canaries):
     Сильный и часто упускаемый сигнал: канарейка в Location (redirect),
     Set-Cookie, Content-Disposition, Link, X-* и т.п. означает, что бэкенд
     прочитал значение и положил его в заголовок. Это и реальный indicator
-    обработки, и нередко прямой вектор (open-redirect / header-injection /
-    CRLF — но проверять это надо вручную, согласно правилам программы).
-
+    обработки, и нередко прямой вектор. 
     Не путать с reflection_oracle, который уже смотрит заголовки, но в общей
     куче; здесь отдаём отдельный, более точный сигнал с классификацией места.
     """
@@ -2801,8 +2793,8 @@ PRE-FLIGHT тебе это подскажет.
   Маленький wordlist (1-5k) — для быстрых прогонов или Termux:
     https://github.com/s0md3v/Arjun/blob/master/arjun/db/params.txt
 
-  Большой wordlist (50k+) — для зрелых программ bug bounty:
-    https://github.com/PortSwigger/param-miner (param-miner wordlist)
+  Большой wordlist (50k+) — для нормальных программ:
+    https://github.com/PortSwigger/param-miner
 
   Tech-specific wordlists работают лучше generic'ов. Если знаешь
   что target на WordPress — добавь WP-specific params (preview, p, cat,
@@ -2839,23 +2831,10 @@ PRE-FLIGHT тебе это подскажет.
     js_string_double → XSS через ": ?param=";alert(1);//
     meta_url_canonical → canonical poisoning / OG-scraper SSRF
 
-POST-PROCESSING
----------------
-После находки:
-  1. Ручная верификация в браузере / Burp (всегда!)
-  2. Probe значениями: пустое, длинное, негативное, JSON, специальные символы
-  3. Анализ context (что именно с параметром делается)
-  4. Цепочка: если параметр на admin-endpoint и контролирует ввод — XSS критичен
-
-==============================================================================
 """
-
-
+      
 def main():
-    # === FORCE UNBUFFERED OUTPUT (v0.5.1) ===
-    # В Termux / при pipe / в некоторых терминалах stdout может быть
-    # block-buffered, и print() копит вывод. Это ломает streaming.
-    # Включаем line-buffering: каждая строка flush'ится сразу.
+    
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
@@ -2982,7 +2961,7 @@ def main():
 
     auto_color_setup(force_disable=args.no_color)
 
-    # Глобальный rate-limit (по умолчанию 5 rps — правило  программы).
+    # Глобальный rate-limit (по умолчанию 5 rps).
     RATE_LIMITER.configure(args.max_rps)
     if args.max_rps and args.max_rps > 0:
         log(f'[*] Global rate limit: {args.max_rps:g} req/s (all threads)')
