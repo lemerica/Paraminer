@@ -1,22 +1,3 @@
-"""
-paraminer.py 
-==================
-Multi-oracle hidden parameter discovery scanner.
-Single-file, stdlib-only. Linux / macOS / Termux (Android).
-
-ОСНОВНЫЕ ВОЗМОЖНОСТИ:
-  • 5 независимых оракулов (diff, time, reflection, error, cache-key)
-  • Streaming output: находки печатаются СРАЗУ при подтверждении
-  • Pre-flight check: автоматически детектит CDN-кэш, OAuth-strict, WAF
-  • Rate-limit auto-detect (429, Cloudflare, AWS WAF) + sticky backoff
-  • Reflection context analyzer (классифицирует место рефлексии)
-  • Auto-pivot: новые endpoint'ы из reflection → recursive scan
-  • Welch's t-test для time-oracle (статистически чистый p-value)
-  • Termux compatible (auto color, ASCII-only output mode)
-
-Подробная справка: python3 paraminer.py --help
-"""
-
 import argparse, gzip, hashlib, json, math, os, queue, random, re, socket, socketserver, ssl
 import statistics, string, sys, threading, time, urllib.parse, zlib
 from collections import deque
@@ -230,6 +211,9 @@ def build_request(base, injection, mode):
 #  STATISTICS — Welch's t-test, Mann-Whitney U, Modified Z-score
 # ============================================================================
 
+# ХЛАМ [minor]: мёртвый код — нигде не вызывается. time_oracle_ttest
+# использует mannwhitney_u. Плюс p-value считается через normal approx (erfc),
+# а не настоящее t-распределение, так что «Welch» в названии — ложь.
 def welch_ttest(sample_a, sample_b):
     n_a, n_b = len(sample_a), len(sample_b)
     if n_a < 2 or n_b < 2: return 0.0, 0.0, 1.0
@@ -250,7 +234,6 @@ def welch_ttest(sample_a, sample_b):
 
 
 def _rankdata(values):
-    """Среднее ранжирование с обработкой ties. Stdlib-only."""
     n = len(values)
     indexed = sorted(range(n), key=lambda i: values[i])
     ranks = [0.0] * n
@@ -267,17 +250,6 @@ def _rankdata(values):
 
 
 def mannwhitney_u(sample_a, sample_b):
-    """Mann-Whitney U test (rank-sum). Non-parametric, robust to non-normal
-    distributions — что критично для network timings, которые right-skewed.
-
-    Возвращает: (u_statistic, p_value, effect_size)
-    - u_statistic: U-statistic (полезен для отладки)
-    - p_value: вероятность что выборки из одного распределения (нулевая гипотеза)
-    - effect_size: rank-biserial correlation в [-1, 1].
-                   Положительный = b > a (probe медленнее baseline)
-                   Отрицательный = b < a (probe быстрее baseline)
-                   Модуль > 0.3 = средний эффект, > 0.5 = сильный
-    """
     n_a, n_b = len(sample_a), len(sample_b)
     if n_a < 3 or n_b < 1: return 0.0, 1.0, 0.0
 
@@ -309,25 +281,11 @@ def mannwhitney_u(sample_a, sample_b):
 
 
 def modified_z_score(value, baseline_median, baseline_mad):
-    """Modified Z-score (Iglewicz-Hoaglin, 1993). Робастный аналог Z-score
-    через MAD. NIST рекомендует |z_mod| > 3.5 как порог outlier-detection. На это в основном я полагался.
-
-    Константа 0.6745 = Φ в -1 (0.75), приводит шкалу к совместимости с обычным Z
-    для нормального распределения.
-    """
     if baseline_mad <= 0: return 0.0
     return 0.6745 * (value - baseline_median) / baseline_mad
 
 
 def adaptive_noise_threshold(median, mad):
-    """Adaptive thresholding для time-oracle на основе шумности baseline.
-    Возвращает модификатор p_value_threshold: чем шумнее таргет, тем строже
-    мы должны быть с time-сигналом (требуем меньший p_value).
-
-    Логика: на шумных серверах случайные колебания таймингов могут давать
-    статистически значимые p-values от пары outlier'ов. Поднимая порог,
-    мы избегаем false positives на нестабильных таргетах.
-    """
     if median <= 0: return 1.0
     noise_ratio = mad / median
     if noise_ratio > 0.30:  # очень шумно
@@ -355,7 +313,6 @@ _WAF_BODY_MARKERS = re.compile(
 
 
 def detect_rate_limit(resp):
-    """Возвращает (severity 0-3, reason, retry_after_seconds)."""
     if resp is None: return 0, None, 0
     if resp.error:
         err = str(resp.error).lower()
@@ -544,7 +501,6 @@ class PreflightReport:
 
     @property
     def is_non_reactive(self):
-        """Target не реагирует на параметры (CDN-кэш / OAuth-strict / WAF-drop)."""
         return len(self.reactive_params) == 0 and self.identical_responses >= 4
 
     def summary(self):
@@ -566,10 +522,6 @@ class PreflightReport:
 
 
 def preflight_check(base_req, mode, timeout=15, proxy=None, printer=None):
-    """
-    Быстрая диагностика target'а до основного скана.
-    Возвращает (PreflightReport, baseline_responses).
-    """
     def emit(msg, level='info'):
         if printer: printer.emit_log(msg, level)
         else: sys.stderr.write(msg + '\n')
@@ -800,11 +752,6 @@ def _detect_attr_context(tag_frag, after):
 # ============================================================================
 
 def extract_pivot_urls(resp_text, canary, base_url):
-    """
-    Найти URL'ы в response, в которых попала канарейка.
-    fix: ищем канарейку В ЦЕЛОМ response, потом смотрим контекст,
-    а не только в URL-attribute regex. Это ловит JS-redirects и data-attrs.
-    """
     pivots = set()
     if canary not in resp_text: return pivots
 
@@ -848,7 +795,6 @@ def extract_pivot_urls(resp_text, canary, base_url):
 
 
 def _normalize_pivot(url, canary, base_url, base_host):
-    """Нормализует URL-пивот: удаляет канарейку, резолвит relative, проверяет origin."""
     # Удалить query-param с канарейкой, если она там
     clean = re.sub(r'[?&][\w\[\]-]*=[^&]*' + re.escape(canary) +
                    r'[^&]*(?=&|$)', '', url)
@@ -926,11 +872,6 @@ class Calibration:
 
     @property
     def server_timing_metrics(self):
-        """
-        Парсит Server-Timing из baseline. Возвращает dict:
-        {metric_name: {'samples': [floats], 'median': float, 'mad': float}}
-        Server-Timing формат: 'db;dur=12.3, cache;dur=0.5, app;dur=4.1'
-        """
         metrics = {}
         for h in self.headers_samples:
             st = h.get('server-timing', '')
@@ -961,12 +902,13 @@ class Calibration:
 
     @property
     def cookies_baseline(self):
-        """Множество (name, value) cookies из baseline."""
         cookies = set()
         for h in self.headers_samples:
             sc = h.get('set-cookie', '')
             if not sc: continue
-            # Парсим простой формат: name=value; attrs
+            # ХЛАМ [minor]: split(',') режет cookies с Expires вида
+            # "Mon, 09 Jun 2W025 ..." — запятая в дате ломает парсинг.
+            # Правильно: http.cookiejar.parse_ns_headers или email.headerregistry.
             for ck in sc.split(','):
                 ck = ck.split(';')[0].strip()
                 if '=' in ck:
@@ -975,12 +917,6 @@ class Calibration:
 
     @property
     def inline_states_baseline(self):
-        """
-        Множества значений inline-state для каждого ключа из baseline.
-        Возвращает {state_key: set(serialized_states)}.
-        Если SSR-данные меняются каждый запрос (timestamps, IDs) — baseline
-        будет иметь несколько значений, и это нормально (diff oracle сравнит).
-        """
         all_states = {}
         for body in self.bodies:
             if not body: continue
@@ -1018,7 +954,9 @@ def diff_oracle(resp, calib, exclude_error_statuses=False):
     return 0.0, None
 
 
-def time_oracle_ttest(probe_times, calib, p_threshold=
+# ХЛАМ [minor]: функция называется ttest, а внутри — mannwhitney_u, не Welch.
+# Имя вводит в заблуждение; справка тоже упоминает «Welch's t-test» зря.
+def time_oracle_ttest(probe_times, calib, p_threshold=0.001):
     if not probe_times or len(calib.times) < 3: return 0.0, None
 
     # Adaptive: tighten p-threshold on noisy targets
@@ -1082,14 +1020,6 @@ def cache_key_oracle(resp, calib):
 
 
 def server_timing_oracle(resp, calib):
-    """
-    NEW v0.5.2: Server-Timing oracle.
-    Парсит Server-Timing header (e.g. 'db;dur=12.3, cache;dur=0.5')
-    и сравнивает каждую метрику с baseline через MAD.
-    
-    Работает СКВОЗЬ CDN-кэш: даже если HTML идентичный из кэша,
-    Server-Timing часто отдаёт реальные backend-метрики.
-    """
     st = resp.headers.get('server-timing', '')
     if not st: return 0.0, None
     baseline = calib.server_timing_metrics
@@ -1128,15 +1058,11 @@ def server_timing_oracle(resp, calib):
 
 
 def cookie_oracle(resp, calib):
-    """
-    NEW v0.5.2: детектит изменения в Set-Cookie.
-    Если параметр заставил сервер выставить новый cookie / изменить значение —
-    это сильный сигнал backend processing, который часто пропускают.
-    """
     sc = resp.headers.get('set-cookie', '')
     if not sc: return 0.0, None
 
     response_cookies = set()
+    # ХЛАМ [minor]: та же проблема с Expires-датой, что в cookies_baseline.
     for ck in sc.split(','):
         ck = ck.split(';')[0].strip()
         if '=' in ck:
@@ -1199,13 +1125,8 @@ _INLINE_STATE_PATTERNS = [
 
 
 def extract_inline_state(text):
-    """
-    Извлекает inline JSON-состояние из HTML-страницы.
-    Возвращает dict: {pattern_name: serialized_state_string}.
-    Для DOM-diff используется именно сериализованная строка (нормализованная),
-    т.к. парсинг JSON может ломаться на сложных объектах.
-    """
     states = {}
+    counters = {}  # счётчик вхождений per pattern-name
     for pattern, name, kind in _INLINE_STATE_PATTERNS:
         for match in re.finditer(pattern, text, re.DOTALL):
             raw = match.group(1)
@@ -1226,7 +1147,12 @@ def extract_inline_state(text):
                 parsed = json.loads(raw)
                 normalized = json.dumps(parsed, sort_keys=True,
                                         separators=(',', ':'))
-                key = f'{name}_{len(states.get(name, []))}'
+                # ХЛАМ (был): states.get(name, []) всегда возвращало [],
+                # потому что ключи хранятся как 'NAME_0', а не 'NAME' —
+                # все матчи одного паттерна перезаписывали друг друга.
+                idx = counters.get(name, 0)
+                counters[name] = idx + 1
+                key = f'{name}_{idx}'
                 states[key] = normalized
             except (json.JSONDecodeError, ValueError):
                 # Если не парсится — используем raw, обрезанный
@@ -1237,15 +1163,6 @@ def extract_inline_state(text):
 
 
 def js_state_oracle(resp, calib):
-    """
-    Oracle для inline-state SPA-фреймворков (Next/Nuxt/Redux/Apollo/Vuex).
-    Сравнивает извлечённое состояние с baseline.
-
-    Работает там где обычный diff не работает:
-    - frontend-rendered SPA с одинаковым HTML-shell
-    - страницы где данные в JSON, а не в DOM
-    - Hydration-патерны SSR
-    """
     if not resp.body: return 0.0, None
     try:
         text = resp.text
@@ -1282,14 +1199,6 @@ def js_state_oracle(resp, calib):
 
 
 def semantic_probe_oracle(base_req, param_name, mode, proxy, timeout, governor=None):
-    """
-   Усиленный error_oracle с семантическими probe-значениями.
-    Шлёт параметр с разными типами значений и анализирует distinct response
-    signatures. Работает даже там, где random canary не отражается.
-    
-    Принцип: если бэкенд РЕАЛЬНО обрабатывает параметр, то integer/null/array/
-    string дадут разные ответы. Если не обрабатывает — все ответы одинаковые.
-    """
     test_values = [
         ('1', 'int_one'),
         ('0', 'int_zero'),
@@ -1351,8 +1260,6 @@ def semantic_probe_oracle(base_req, param_name, mode, proxy, timeout, governor=N
 
 
 def header_reflection_oracle(resp, canaries):
-места.
-  
     if not resp.headers:
         return 0.0, None
     # заголовки, попадание в которые особенно показательно
@@ -1370,17 +1277,6 @@ def header_reflection_oracle(resp, canaries):
 
 def pollution_oracle(base_req, param_name, mode, proxy, timeout,
                      calib, requester=None):
-    """HTTP Parameter Pollution / value-confusion oracle.
-
-    Идея: сравниваем три ответа —
-      (a) без параметра,
-      (b) param=V1,
-      (c) param=V1&param=V2 (дубль того же ключа).
-    Если (c) отличается от (b) — бэкенд РЕАЛЬНО разбирает этот ключ (берёт
-    первое/последнее/массив значений). Для параметров, которые сервер
-    игнорирует, дубль ничего не меняет. Работает даже когда одиночный probe
-    не отличается от baseline (значение по умолчанию совпало).
-    """
     if mode not in ('query', 'form'):
         return 0.0, None
     if requester is None:
@@ -1439,13 +1335,6 @@ def pollution_oracle(base_req, param_name, mode, proxy, timeout,
 
 def boolean_pair_oracle(base_req, param_name, mode, proxy, timeout,
                         requester=None, repeats=3):
-    """
-    Шлём пару ПРОТИВОПОЛОЖНЫХ значений несколько раз и проверяем, что разница
-    между ними СТАБИЛЬНА (не плавает от запроса к запросу). Стабильное
-    расхождение = детерминированная реакция бэкенда на значение, а не сетевой
-    шум. Это ключевой антидот к false-positiveّам semantic_probe/timing на
-    нестабильных таргетах: случайный джиттер не даёт стабильной разницы.
-    """
     if mode not in ('query', 'form', 'json'):
         return 0.0, None
     if requester is None:
@@ -1541,7 +1430,6 @@ def aggregate(*signals):
 _PLAYWRIGHT_AVAILABLE = None  # lazy check
 
 def _check_playwright():
-    """Возвращает True/False с кэшированием — playwright установлен?"""
     global _PLAYWRIGHT_AVAILABLE
     if _PLAYWRIGHT_AVAILABLE is not None:
         return _PLAYWRIGHT_AVAILABLE
@@ -1589,7 +1477,7 @@ class DOMSnapshot:
             sample = list(new_xhr)[0]
             diffs.append(('xhr', f'new XHR: {sample[0]} {sample[1][:80]}'))
         # Console diff
-        new_logs = [l for l in other.console_logs if l not in self.console_logs]
+        new_logs = [entry for entry in other.console_logs if entry not in self.console_logs]
         if new_logs:
             diffs.append(('console', f'new console: {new_logs[0][:80]!r}'))
         # Storage diff
@@ -1617,10 +1505,6 @@ class DOMSnapshot:
 
 
 class DOMScanner:
-    """
-    Запускает headless Chrome, делает snapshot страницы для baseline и probes.
-    Один browser-instance для всей сессии (быстрее).
-    """
     def __init__(self, timeout=20, headless=True, user_agent=None):
         if not _check_playwright():
             raise RuntimeError(
@@ -1647,7 +1531,6 @@ class DOMScanner:
         except Exception: pass
 
     def snapshot(self, url):
-        """Загружает URL, выполняет JS, возвращает DOMSnapshot."""
         if not self._browser: self.start()
         # Lock — playwright sync API не очень thread-safe
         with self._lock:
@@ -1712,7 +1595,6 @@ class DOMScanner:
                 ctx.close()
                 return None
 
-            import hashlib
             body_hash = hashlib.md5(body_html.encode('utf-8',
                                                      errors='replace')).hexdigest()
 
@@ -1756,9 +1638,6 @@ def dom_diff_oracle(base_url, param_name, canary, mode, dom_scanner,
     if not diffs: return 0.0, None
 
     def _is_canary_echo_url(u_base, u_probe):
-        """True, если разница final_url — это лишь наша же ?param=canary,
-        добавленная к тому же пути. Артефакт редиректов на /login и т.п.,
-        НЕ сигнал об обработке параметра бэкендом."""
         if not u_probe:
             return False
         if canary not in u_probe and param_name not in u_probe:
@@ -1875,11 +1754,6 @@ class StreamPrinter:
             self._render_progress()
 
     def emit_candidate(self, name, score, reasons, endpoint=None):
-        """
-        Stage 1 кандидат — лёгкий вывод ДО verify-стадии.
-        Печатается АВТОМАТИЧЕСКИ при каждой находке (без флага).
-        Маркируется '?' (не подтверждённый), confidence в [].
-        """
         with self.lock:
             self._clear_progress()
             ep = endpoint or '?'
@@ -2042,7 +1916,6 @@ class Scanner:
             self._dom_oracle_cleanup()
 
     def _dom_oracle_cleanup(self):
-        """Stop DOMScanner and disable the oracle. Safe to call multiple times."""
         if self.dom_scanner is not None:
             try: self.dom_scanner.stop()
             except Exception: pass
@@ -2287,7 +2160,6 @@ class Scanner:
         stats_lock = threading.Lock()
 
         def push_candidate(name, score, reasons):
-            """Кладёт кандидата в очередь с защитой от cap и dup."""
             # Дедупликация
             with self._stream_seen_lock:
                 if name in self._stream_seen:
@@ -2395,7 +2267,6 @@ class Scanner:
         return self.findings
 
     def _run_batched(self, wordlist):
-        """Классический batch-режим: сначала весь discovery, потом весь verify."""
         cs = min(self.chunk_size, max(5, len(wordlist) // 4))
         chunks = [wordlist[i:i + cs] for i in range(0, len(wordlist), cs)]
         self._log(f'[*] Scanning {len(wordlist)} params in {len(chunks)} chunks '
@@ -2488,12 +2359,14 @@ class Scanner:
 def run_with_pivot(base_req, wordlist, scan_kwargs, pivot_depth=1,
                    max_pivot_endpoints=10, printer=None):
     all_findings = []
-    queue = deque([(base_req['url'], 0)])
+    # ХЛАМ (был): переменная называлась queue — конфликт с модулем queue из
+    # stdlib (используется в _run_streaming). Переименовано в url_queue.
+    url_queue = deque([(base_req['url'], 0)])
     visited = set([base_req['url'].rstrip('/').split('?')[0]])
     pivots_scanned = 0
 
-    while queue:
-        url, depth = queue.popleft()
+    while url_queue:
+        url, depth = url_queue.popleft()
         if depth > pivot_depth: continue
         if pivots_scanned >= max_pivot_endpoints:
             (printer.emit_log if printer else log)(
@@ -2515,7 +2388,7 @@ def run_with_pivot(base_req, wordlist, scan_kwargs, pivot_depth=1,
                     norm = purl.rstrip('/').split('?')[0]
                     if norm not in visited:
                         visited.add(norm)
-                        queue.append((purl, depth + 1))
+                        url_queue.append((purl, depth + 1))
                         m = f'    [+] PIVOT discovered: {f.name!r} -> {purl}'
                         if printer: printer.emit_log(m)
                         else: log(m)
@@ -2870,6 +2743,8 @@ def main():
                     help='пропустить pre-flight check')
     ap.add_argument('--force-scan', action='store_true',
                     help='игнорировать вердикт pre-flight и сканить всё равно')
+    # ХЛАМ [minor]: флаг объявлен DEPRECATED, но --no-stream-candidates живёт дальше.
+    # Если совместимость не нужна — оба флага можно удалить, поведение стало дефолтным.
     ap.add_argument('--stream-candidates', action='store_true',
                     help='[DEPRECATED, no-op] стрим кандидатов теперь включён '
                          'по умолчанию. Флаг оставлен для совместимости.')
@@ -3051,11 +2926,8 @@ def main():
 #  SELFTEST (компактный)
 # ============================================================================
 
-def _silent_log(self, *args, **kwargs): pass
-
-
 class _SBasic(BaseHTTPRequestHandler):
-    log_message = _silent_log
+    log_message = lambda *_: None
     def do_GET(self):
         params = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
         body = '<html><body>Welcome'
@@ -3075,8 +2947,7 @@ class _SBasic(BaseHTTPRequestHandler):
 
 
 class _SPivot(BaseHTTPRequestHandler):
-    """/ + ?next=X -> href со step2. /step2/ + ?secret=Y -> diff."""
-    log_message = _silent_log
+    log_message = lambda *_: None
     def do_GET(self):
         parsed = urllib.parse.urlsplit(self.path)
         params = urllib.parse.parse_qs(parsed.query)
