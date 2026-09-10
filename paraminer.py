@@ -207,13 +207,6 @@ def build_request(base, injection, mode):
     return method, url, headers, body
 
 
-# ============================================================================
-#  STATISTICS — Welch's t-test, Mann-Whitney U, Modified Z-score
-# ============================================================================
-
-# ХЛАМ [minor]: мёртвый код — нигде не вызывается. time_oracle_ttest
-# использует mannwhitney_u. Плюс p-value считается через normal approx (erfc),
-# а не настоящее t-распределение, так что «Welch» в названии — ложь.
 def welch_ttest(sample_a, sample_b):
     n_a, n_b = len(sample_a), len(sample_b)
     if n_a < 2 or n_b < 2: return 0.0, 0.0, 1.0
@@ -264,8 +257,7 @@ def mannwhitney_u(sample_a, sample_b):
     # Normal approximation для p-value (точна при n_a + n_b >= 10).
     # Continuity correction: -0.5
     mean_u = n_a * n_b / 2.0
-    # Учёт ties в дисперсии (упрощённо, без полной коррекции ties — для
-    # network timings это редко критично):
+    # Учёт ties в дисперсии (упрощённо)
     var_u = n_a * n_b * (n_a + n_b + 1) / 12.0
     if var_u <= 0: return u, 1.0, 0.0
 
@@ -275,7 +267,7 @@ def mannwhitney_u(sample_a, sample_b):
 
     # Effect size (rank-biserial): direction probe vs baseline
     # u_b > u_a означает что выборка b имеет более высокие ранги (= медленнее)
-    effect = (u_b - u_a) / (n_a * n_b)  # ∈ [-1, 1]
+    effect = (u_b - u_a) / (n_a * n_b)  # in [-1, 1]
 
     return u, p, effect
 
@@ -295,11 +287,6 @@ def adaptive_noise_threshold(median, mad):
     elif noise_ratio > 0.08:  # лёгкий шум
         return 0.5
     return 1.0          # таргет стабилен — используем базовый порог
-
-
-# ============================================================================
-#  RATE-LIMIT DETECTION
-# ============================================================================
 
 _WAF_BODY_MARKERS = re.compile(
     r'(just a moment|attention required|access denied|'
@@ -464,7 +451,7 @@ class RateLimitGovernor:
 
 
 # ============================================================================
-#  PRE-FLIGHT CHECK (NEW v0.5) — детект CDN/WAF/non-reactive target
+#  PRE-FLIGHT CHECK — детект CDN/WAF/non-reactive target
 # ============================================================================
 
 # CDN/cache headers, обнаружение которых = «между нами и приложением кэш»
@@ -483,7 +470,7 @@ _CDN_HEADERS = {
     'fastly-debug-digest': 'Fastly',
 }
 
-# Параметры, которые САМЫЕ распространённые на любом веб-app
+# Параметры, которые САМЫЕ распространённые на любом вебаппе
 _PROBE_PARAMS = ['debug', 'admin', 'test', 'id', 'q', 'redirect',
                  'callback', 'lang', 'page', 'search', 'preview', 'mode']
 
@@ -747,17 +734,13 @@ def _detect_attr_context(tag_frag, after):
     return {'attr_name': '', 'quote': None}
 
 
-# ============================================================================
-#  PIVOT EXTRACTION — FIXED
-# ============================================================================
-
 def extract_pivot_urls(resp_text, canary, base_url):
     pivots = set()
     if canary not in resp_text: return pivots
 
     base_host = urllib.parse.urlsplit(base_url).netloc
 
-    # Method 1: канарейка прямо в href/src/action/data-X attribute
+    # Method 1: канарейка в href/src/action/data-X attribute
     for m in re.finditer(
         r'(?:href|src|action|content|formaction|data-[\w-]+)\s*=\s*["\']?'
         r'([^"\'\s<>]*' + re.escape(canary) + r'[^"\'\s<>]*)', resp_text, re.I):
@@ -765,8 +748,6 @@ def extract_pivot_urls(resp_text, canary, base_url):
         pivot = _normalize_pivot(url, canary, base_url, base_host)
         if pivot: pivots.add(pivot)
 
-    # Method 2: канарейка внутри JS-строки с URL-like контекстом
-    # Ищем 'string with canary' где string выглядит как URL
     for m in re.finditer(
         r'["\']((?:https?:|/)[^"\']*' + re.escape(canary) + r'[^"\']*)["\']',
         resp_text):
@@ -833,10 +814,6 @@ class Calibration:
     def absorb(self, resp):
         self.statuses.append(resp.status)
         self.lengths.append(resp.length)
-        # times = TTFB (server processing + RTT, без скачивания тела).
-        # Это убирает шум от размера ответа: параметр, который изменил длину
-        # на 100KB, не создаёт фантомного time-signal от bandwidth.
-        # Fallback на elapsed для старых Resp без ttfb (selftest, и т.п.)
         self.times.append(resp.ttfb if resp.ttfb > 0 else resp.elapsed)
         self.total_times.append(resp.elapsed)
         self.headers_samples.append(dict(resp.headers))
@@ -906,9 +883,7 @@ class Calibration:
         for h in self.headers_samples:
             sc = h.get('set-cookie', '')
             if not sc: continue
-            # ХЛАМ [minor]: split(',') режет cookies с Expires вида
-            # "Mon, 09 Jun 2W025 ..." — запятая в дате ломает парсинг.
-            # Правильно: http.cookiejar.parse_ns_headers или email.headerregistry.
+                
             for ck in sc.split(','):
                 ck = ck.split(';')[0].strip()
                 if '=' in ck:
@@ -953,9 +928,6 @@ def diff_oracle(resp, calib, exclude_error_statuses=False):
     except Exception: pass
     return 0.0, None
 
-
-# ХЛАМ [minor]: функция называется ttest, а внутри — mannwhitney_u, не Welch.
-# Имя вводит в заблуждение; справка тоже упоминает «Welch's t-test» зря.
 def time_oracle_ttest(probe_times, calib, p_threshold=0.001):
     if not probe_times or len(calib.times) < 3: return 0.0, None
 
@@ -1062,7 +1034,6 @@ def cookie_oracle(resp, calib):
     if not sc: return 0.0, None
 
     response_cookies = set()
-    # ХЛАМ [minor]: та же проблема с Expires-датой, что в cookies_baseline.
     for ck in sc.split(','):
         ck = ck.split(';')[0].strip()
         if '=' in ck:
@@ -1074,7 +1045,6 @@ def cookie_oracle(resp, calib):
 
     # Фильтр псевдо-новых (session-id меняется каждый запрос, это не наш сигнал)
     # Используем эвристику: cookie с длинным random value (>20 chars hex/base64)
-    # вероятно session token, не наш indicator
     interesting = []
     for ck in new_cookies:
         name, _, value = ck.partition('=')
@@ -1088,11 +1058,7 @@ def cookie_oracle(resp, calib):
     return 0.7, f'new Set-Cookie: {sample!r}'
 
 
-# ============================================================================
-#  INLINE JS-STATE EXTRACTION (v0.6 — путь 1, без зависимостей)
-# ============================================================================
-
-# Паттерны inline-state для популярных SPA-фреймворков
+# Паттерны
 _INLINE_STATE_PATTERNS = [
     # Next.js
     (r'<script[^>]*id=["\']__NEXT_DATA__["\'][^>]*>(.*?)</script>',
@@ -1147,16 +1113,11 @@ def extract_inline_state(text):
                 parsed = json.loads(raw)
                 normalized = json.dumps(parsed, sort_keys=True,
                                         separators=(',', ':'))
-                # ХЛАМ (был): states.get(name, []) всегда возвращало [],
-                # потому что ключи хранятся как 'NAME_0', а не 'NAME' —
-                # все матчи одного паттерна перезаписывали друг друга.
                 idx = counters.get(name, 0)
                 counters[name] = idx + 1
                 key = f'{name}_{idx}'
                 states[key] = normalized
             except (json.JSONDecodeError, ValueError):
-                # Если не парсится — используем raw, обрезанный
-                # (некоторые SPA сериализуют невалидный JSON с JS-литералами)
                 states[f'{name}_raw'] = raw[:2000]
 
     return states
@@ -1420,12 +1381,7 @@ def aggregate(*signals):
 #  читает фронтенд (OAuth, SPA, аналитика) и которые невидимы для HTTP-diff.
 #
 #  ВНИМАНИЕ: DOM-diff в 50-200x медленнее HTTP-diff. Не использовать
-#  на больших wordlists (>500 params). Подход:
-#    1) Запустить обычный скан с HTTP-оракулами → получить кандидатов
-#    2) Прогнать DOM-diff только на кандидатах
-#  ИЛИ:
-#    Использовать --dom-diff-only на маленьком (50-200) wordlist'е.
-# ============================================================================
+#  на больших wordlists (>500 params).
 
 _PLAYWRIGHT_AVAILABLE = None  # lazy check
 
@@ -1617,7 +1573,7 @@ def dom_diff_oracle(base_url, param_name, canary, mode, dom_scanner,
   
     if mode != 'query':
         # DOM-diff пока работает только с query-параметрами
-        # (для body нужна была бы XHR-инъекция, это другое)
+        # (для body нужна была бы XHR, это другое)
         return 0.0, None
 
     # Строим URL с inject
@@ -1650,9 +1606,6 @@ def dom_diff_oracle(base_url, param_name, canary, mode, dom_scanner,
         stripped = stripped.replace('?&', '?').rstrip('?&')
         return stripped.rstrip('/') == (u_base or '').rstrip('/')
 
-    # Фильтр шумных/артефактных diff'ов:
-    #  - cookie с session/csrf/token/nonce (меняются каждый запрос)
-    #  - final_url, отличающийся ровно на нашу же канарейку (redirect echo)
     interesting = []
     for kind, msg in diffs:
         if kind == 'cookie' and re.search(r'sess|csrf|tok|nonce', msg, re.I):
@@ -1833,10 +1786,6 @@ class Scanner:
         self.stream_verify_cap = stream_verify_cap
         self._stream_seen = set()  # дедупликация в stream-verify режиме
         self._stream_seen_lock = threading.Lock()
-        # Direct-probe режим: обходит chunk-based discovery полностью и гоняет
-        # verify_param (со всеми оракулами, включая semantic_probe) по каждому
-        # параметру напрямую. Для CDN-кэшированных / non-reactive таргетов, где
-        # diff-discovery по чанкам бесполезен.
         self.direct_probe = direct_probe
 
     def _log(self, msg, level='info'):
@@ -1940,9 +1889,6 @@ class Scanner:
         mid = len(params_chunk) // 2
         result = (self.test_chunk(params_chunk[:mid], depth + 1) +
                   self.test_chunk(params_chunk[mid:], depth + 1))
-        # тут было `return []` — целый чанк выбрасывался, если из него
-        # вылезало больше max_chunk_hits кандидатов. На шумных/echo-таргетах это
-        # уничтожало реальные находки. Теперь обрезаем по score, а не теряем всё.
         if len(result) > self.max_chunk_hits:
             result.sort(key=lambda x: -x[1])
             return result[:self.max_chunk_hits]
@@ -1968,11 +1914,9 @@ class Scanner:
         t_score, t_reason = time_oracle_ttest(probe_times, self.calib,
                                               self.p_value_threshold)
         f_score, f_reason, contexts = reflection_oracle(results[0], [canary])
-        # NEW: отдельный header-reflection oracle (Location/Set-Cookie/...)
         hr_score, hr_reason = header_reflection_oracle(results[0], [canary])
         cache_score, cache_reason = (cache_key_oracle(results[0], self.calib)
                                      if self.use_cache_oracle else (0.0, None))
-        # NEW v0.5.2: server-timing + cookie oracles
         st_score, st_reason = server_timing_oracle(results[0], self.calib)
         ck_score, ck_reason = cookie_oracle(results[0], self.calib)
 
@@ -1991,9 +1935,6 @@ class Scanner:
             return self._request(m, u, h, b, timeout=self.timeout,
                                  proxy=self.proxy)
 
-        # отныне наварил boolean-pair oracle — стабильное расхождение противоположных
-        # значений. Сильный антишумовой сигнал. Гоняем в direct-probe всегда,
-        # иначе — как подтверждение когда есть лишь слабые сигналы.
         weak_only = signals and all(s < 0.55 for s, _ in signals)
         if (self.direct_probe or not signals or weak_only) \
                 and not self.skip_error_oracle:
@@ -2011,11 +1952,6 @@ class Scanner:
                 if pp[0] > 0: signals.append(pp)
             except Exception: pass
 
-        # даже если классические оракулы не сработали,
-        # запускаем semantic probe — он может детектить параметры на
-        # CDN-кэшированных целях через distinct response signatures.
-        # В direct-probe режиме запускаем ВСЕГДА (это основной оракул там),
-        # иначе — только если других сигналов нет (экономия запросов).
         if (self.direct_probe or not signals) and not self.skip_error_oracle:
             try:
                 sp = semantic_probe_oracle(self.base_req, name, self.mode,
@@ -2033,9 +1969,6 @@ class Scanner:
                 if e[0] > 0: signals.append(e)
             except Exception: pass
 
-        # DOM-oracle: heavy (запускает Chromium), поэтому вызываем только если
-        # включён и хотя бы один лёгкий сигнал уже есть. Это работает как
-        # доп. подтверждение для борьбы с false positives, особенно для SPA.
         if self.use_dom_oracle:
             # Lazy-init оттуда: Playwright sync API thread-affinity.
             # max_workers=1 в run() гарантирует, что все verify_param идут отсюда.
@@ -2057,7 +1990,7 @@ class Scanner:
         # теперь тут anti-false-positive gate. Несколько слабых сигналов (timing-шум +
         # redirect-echo) перемножаются в высокий total через aggregate(), но это
         # ничего не значит. Требуем хотя бы ОДИН самостоятельно убедительный
-        # сигнал. Иначе — отбрасываем (это и убивало те 12 фантомных 0.78, что были раннее)
+        # сигнал. Иначе — отбрасываем.
     
         if not any(s >= 0.55 for s, _ in signals):
             return None
@@ -2146,15 +2079,11 @@ class Scanner:
                                          chunks_done=0, cands_found=0,
                                          verify_total=0, verified_done=0)
 
-        # Verify-queue: tuple (priority_neg_score, candidate_id, name, score, reasons)
-        # priority_neg_score нужен для PriorityQueue: сначала высокий score
-        # (мы используем -score чтобы max-heap эмулировать через min-heap)
         verify_q = queue.PriorityQueue()
         # Счётчик чтобы сделать tuple-priority стабильным (избежать сравнения
         # reasons при равных score, что упадёт на list of dicts):
         cand_counter = [0]
 
-        # Состояние pipeline
         discovery_done = threading.Event()
         verify_stats = {'queued': 0, 'verified': 0, 'dropped_cap': 0, 'dropped_dup': 0}
         stats_lock = threading.Lock()
@@ -2332,7 +2261,7 @@ class Scanner:
         verified = [0]
         # DOM-oracle нельзя гонять из нескольких потоков — Playwright sync API
         # привязан к треду, где был запущен. При use_dom_oracle делаем verify
-        # однопоточным. Хотя в целом похуй, DOM-snapshot сам по себе медленный.
+        # однопоточным. Хотя в целом похуй, дом-снапшот сам по себе медленный.
         verify_workers = 1 if self.use_dom_oracle else 2
         with ThreadPoolExecutor(max_workers=verify_workers) as ex:
             futures = {ex.submit(self.verify_param, n, s, r): n
@@ -2347,7 +2276,6 @@ class Scanner:
                     with self.lock:
                         self.findings.append(res)
                         if self.printer: self.printer.emit_finding(res)
-        # Освобождаем Chromium ресурсы (если использовали DOM-oracle)
         self._dom_oracle_cleanup()
         return self.findings
 
@@ -2658,7 +2586,7 @@ def main():
     try:
         sys.stdout.reconfigure(line_buffering=True)
     except Exception:
-        # Python < 3.7 или экзотический stdout — fallback
+        # Python < 3.7
         os.environ['PYTHONUNBUFFERED'] = '1'
 
     # Кастомный help — печатаем сами при --help-ru или -hr
@@ -3056,3 +2984,7 @@ def run_selftest():
 
 if __name__ == '__main__':
     main()
+
+
+
+# это пиздец аххахаха
